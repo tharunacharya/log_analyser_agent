@@ -1,5 +1,6 @@
 import os
 import ssl
+import time
 import urllib3
 from dotenv import load_dotenv
 
@@ -11,7 +12,6 @@ ssl._create_default_https_context = ssl._create_unverified_context
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import requests
-from requests.adapters import HTTPAdapter
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={API_KEY}"
@@ -39,10 +39,18 @@ Logs:
     payload = {
         "contents": [{"parts": [{"text": prompt}]}]
     }
-    response = requests.post(API_URL, json=payload, verify=False)
-    response.raise_for_status()
-    data = response.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"]
+    for attempt in range(3):
+        response = requests.post(API_URL, json=payload, verify=False)
+        if response.status_code == 429:
+            wait = (attempt + 1) * 10
+            print(f"Rate limited. Retrying in {wait} seconds...")
+            time.sleep(wait)
+            continue
+        response.raise_for_status()
+        data = response.json()
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    print("Error: Too many requests. Please wait a minute and try again.")
+    return None
 
 
 if __name__ == "__main__":
