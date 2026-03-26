@@ -1,0 +1,8 @@
+2026-03-12 10:02:14 INFO Application started
+2026-03-12 10:03:20 INFO Database connection established
+2026-03-12 10:05:01 WARNING Slow query detected
+2026-03-12 10:06:11 ERROR Database connection timeout
+2026-03-12 10:06:12 ERROR Retry attempt failed
+2026-03-12 10:06:15 ERROR Unable to fetch user data
+2026-03-12 10:07:01 INFO Health check running
+2026-03-12 10:07:05 ERROR Database connection lost
