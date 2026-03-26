@@ -1,15 +1,20 @@
 import os
-import httpx
+import ssl
+import urllib3
 from dotenv import load_dotenv
-from google import genai
 
 load_dotenv()
 
-client = genai.Client(
-    api_key=os.getenv("GOOGLE_API_KEY"),
-    http_options={"api_version": "v1beta"},
-    httpx_client=httpx.Client(verify=False)
-)
+# Disable SSL verification for corporate proxy/firewall
+os.environ["GRPC_SSL_CIPHER_SUITES"] = "HIGH"
+ssl._create_default_https_context = ssl._create_unverified_context
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+import requests
+from requests.adapters import HTTPAdapter
+
+API_KEY = os.getenv("GOOGLE_API_KEY")
+API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={API_KEY}"
 
 
 def read_logs():
@@ -31,11 +36,13 @@ Return output in structured format.
 Logs:
 {log_text}
 """
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt
-    )
-    return response.text
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+    response = requests.post(API_URL, json=payload, verify=False)
+    response.raise_for_status()
+    data = response.json()
+    return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
 if __name__ == "__main__":
