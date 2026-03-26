@@ -7,14 +7,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Disable SSL verification for corporate proxy/firewall
-os.environ["GRPC_SSL_CIPHER_SUITES"] = "HIGH"
 ssl._create_default_https_context = ssl._create_unverified_context
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import requests
 
-API_KEY = os.getenv("GOOGLE_API_KEY")
-API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={API_KEY}"
+API_KEY = os.getenv("GROQ_API_KEY")
+API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 def read_logs():
@@ -36,11 +35,16 @@ Return output in structured format.
 Logs:
 {log_text}
 """
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
+    }
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}]
+        "model": "llama-3.3-70b-versatile",
+        "messages": [{"role": "user", "content": prompt}]
     }
     for attempt in range(3):
-        response = requests.post(API_URL, json=payload, verify=False)
+        response = requests.post(API_URL, json=payload, headers=headers, verify=False)
         if response.status_code == 429:
             wait = (attempt + 1) * 10
             print(f"Rate limited. Retrying in {wait} seconds...")
@@ -48,7 +52,7 @@ Logs:
             continue
         response.raise_for_status()
         data = response.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        return data["choices"][0]["message"]["content"]
     print("Error: Too many requests. Please wait a minute and try again.")
     return None
 
