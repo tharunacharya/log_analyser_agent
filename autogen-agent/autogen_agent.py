@@ -1,15 +1,14 @@
-import os
-from dotenv import load_dotenv
 from autogen import AssistantAgent, UserProxyAgent
 
-# Load environment variables from parent .env
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
-
-# Configure LLM to use Groq (OpenAI-compatible API)
+# Configure LLM to use Ollama (local LLM running in Codespace)
 llm_config = {
-    "model": "llama-3.3-70b-versatile",
-    "api_key": os.getenv("GROQ_API_KEY"),
-    "base_url": "https://api.groq.com/openai/v1",
+    "config_list": [
+        {
+            "model": "phi3:mini",
+            "api_key": "ollama",
+            "base_url": "http://localhost:11434/v1",
+        }
+    ],
 }
 
 # Task 1: Simple two-agent system
