@@ -1,0 +1,113 @@
+RUNBOOK: Disk Space Critical on Linux Server
+Category: Storage
+Severity: Critical
+Last Updated: 2024-12-15
+
+SYMPTOMS:
+- Disk usage alert triggered (threshold: 85%, critical: 95%)
+- Applications failing to write logs or data
+- Database write operations failing
+- "No space left on device" errors in application logs
+- System becoming unresponsive or services crashing
+- Swap space exhaustion if root partition is full
+
+ROOT CAUSE ANALYSIS:
+1. Log files growing unbounded without rotation
+2. Application generating excessive temporary files
+3. Database data growth exceeding provisioned storage
+4. Core dumps or heap dumps accumulating
+5. Old backups or snapshots not cleaned up
+6. Docker images and containers consuming disk space
+7. Package manager cache buildup
+8. Large file uploads by users not cleaned up
+
+DIAGNOSTIC STEPS:
+Step 1: Check overall disk usage
+  Command: df -h
+  Command: df -i  (check inode usage)
+
+Step 2: Identify largest directories
+  Command: du -sh /* 2>/dev/null | sort -rh | head -20
+  Command: du -sh /var/* 2>/dev/null | sort -rh | head -10
+  Command: du -sh /home/* 2>/dev/null | sort -rh | head -10
+
+Step 3: Find large files (>100MB)
+  Command: find / -type f -size +100M -exec ls -lh {} \; 2>/dev/null | sort -k5 -rh | head -20
+
+Step 4: Check log directory sizes
+  Command: du -sh /var/log/*  | sort -rh | head -10
+  Command: ls -lhS /var/log/ | head -20
+
+Step 5: Check for deleted but open files (zombie files)
+  Command: lsof +L1 | awk '{print $7, $1, $2, $9}' | sort -rn | head -20
+
+Step 6: Check Docker disk usage (if applicable)
+  Command: docker system df
+  Command: docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | sort -k3 -rh
+
+Step 7: Check temporary files
+  Command: du -sh /tmp /var/tmp
+  Command: find /tmp -type f -mtime +7 | wc -l
+
+RESOLUTION STEPS:
+1. Quick relief — clean old logs:
+   Command: find /var/log -name "*.log.*" -mtime +7 -delete
+   Command: find /var/log -name "*.gz" -mtime +30 -delete
+   Command: journalctl --vacuum-size=500M
+   Command: journalctl --vacuum-time=7d
+
+2. Truncate active large log files (without deleting):
+   Command: truncate -s 0 /var/log/syslog
+   Command: cat /dev/null > /path/to/large-logfile.log
+
+3. Clean package manager cache:
+   For Debian/Ubuntu:
+   Command: apt-get clean
+   Command: apt-get autoremove -y
+   For RHEL/CentOS:
+   Command: yum clean all
+   Command: dnf clean all
+
+4. Clean Docker resources:
+   Command: docker system prune -af --volumes
+   Command: docker volume prune -f
+   Command: docker image prune -af
+
+5. Remove old temporary files:
+   Command: find /tmp -type f -mtime +7 -delete
+   Command: find /var/tmp -type f -mtime +30 -delete
+
+6. Clean old core dumps:
+   Command: find / -name "core.*" -type f -delete
+   Command: find / -name "*.hprof" -type f -mtime +3 -delete
+
+7. If database is the culprit:
+   - Identify and archive old data
+   - Expand the volume:
+   Command: lvextend -L +20G /dev/mapper/vg-data
+   Command: resize2fs /dev/mapper/vg-data
+
+8. Set up log rotation if missing:
+   Command: cat /etc/logrotate.d/application
+   Create config:
+   /var/log/application/*.log {
+       daily
+       rotate 7
+       compress
+       delaycompress
+       missingok
+       notifempty
+   }
+
+ESCALATION:
+- If disk is at 100% and critical services are down, escalate immediately to L2
+- If data volume expansion is needed, contact storage team
+- Contact: storage-oncall@company.com
+- Slack: #storage-alerts
+
+PREVENTION:
+- Implement log rotation for all applications
+- Set up disk usage monitoring with graduated alerts (80%, 90%, 95%)
+- Auto-cleanup cron jobs for temp and log directories
+- Regular capacity reviews and volume expansion planning
+- Use separate mount points for /var/log, /tmp, and application data

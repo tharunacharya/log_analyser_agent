@@ -1,0 +1,136 @@
+RUNBOOK: Load Balancer Returning 502/503/504 Errors
+Category: Network
+Severity: Critical
+Last Updated: 2024-12-15
+
+SYMPTOMS:
+- Users receiving 502 Bad Gateway, 503 Service Unavailable, or 504 Gateway Timeout errors
+- Health check failures on load balancer target group
+- Spike in error rate metrics on monitoring dashboard
+- Application appears down despite backend servers running
+- Intermittent connectivity — some requests succeed, others fail
+- Alert: "Load balancer error rate exceeded threshold"
+
+ROOT CAUSE ANALYSIS:
+1. Backend servers unhealthy or unreachable
+2. Backend application crashed or not listening on expected port
+3. Security group or firewall blocking traffic between LB and backends
+4. SSL/TLS certificate expired or misconfigured
+5. Backend server overloaded (connection queue full)
+6. DNS resolution failure
+7. Target group misconfiguration (wrong port, wrong health check path)
+8. Network ACL or routing table misconfiguration
+9. Backend response timeout exceeded LB timeout settings
+10. Connection draining during deployment
+
+DIAGNOSTIC STEPS:
+Step 1: Check load balancer health and target status
+  For AWS ALB:
+  Command: aws elbv2 describe-target-health --target-group-arn <tg-arn>
+  For Nginx:
+  Command: nginx -t
+  Command: cat /var/log/nginx/error.log | tail -50
+
+Step 2: Verify backend servers are running
+  Command: curl -v http://<backend-ip>:<port>/health
+  Command: telnet <backend-ip> <port>
+  Command: nc -zv <backend-ip> <port>
+
+Step 3: Check backend application logs
+  Command: journalctl -u <service-name> --since "30 min ago" | tail -100
+  Command: tail -100 /var/log/<application>/error.log
+
+Step 4: Check network connectivity
+  Command: traceroute <backend-ip>
+  Command: ping <backend-ip>
+  Command: mtr --report <backend-ip>
+
+Step 5: Check security groups and firewall rules
+  For AWS:
+  Command: aws ec2 describe-security-groups --group-ids <sg-id>
+  For iptables:
+  Command: iptables -L -n | grep <port>
+
+Step 6: Check SSL certificate status
+  Command: echo | openssl s_client -connect <domain>:443 -servername <domain> 2>/dev/null | openssl x509 -noout -dates
+  Command: curl -vI https://<domain> 2>&1 | grep -i "expire\|SSL\|certificate"
+
+Step 7: Check connection counts and limits
+  Command: ss -s
+  Command: netstat -an | grep <port> | wc -l
+  Command: cat /proc/sys/net/core/somaxconn
+  Command: ulimit -n
+
+Step 8: Check DNS resolution
+  Command: nslookup <domain>
+  Command: dig <domain> +short
+  Command: host <domain>
+
+Step 9: Check load balancer access logs
+  For AWS ALB:
+  Command: aws s3 ls s3://<lb-logs-bucket>/AWSLogs/ --recursive | tail -5
+  For Nginx:
+  Command: tail -100 /var/log/nginx/access.log | grep " 502 \| 503 \| 504 "
+
+RESOLUTION STEPS:
+1. If backend servers are down — restart services:
+   Command: systemctl restart <service-name>
+   Command: systemctl status <service-name>
+   Verify: curl -v http://<backend-ip>:<port>/health
+
+2. If health check misconfigured:
+   For AWS:
+   Command: aws elbv2 modify-target-group --target-group-arn <tg-arn> --health-check-path /health --health-check-interval-seconds 30 --healthy-threshold-count 2
+   For Nginx upstream:
+   Edit /etc/nginx/nginx.conf:
+   upstream backend {
+       server backend1:8080 max_fails=3 fail_timeout=30s;
+       server backend2:8080 max_fails=3 fail_timeout=30s;
+   }
+   Command: nginx -t && systemctl reload nginx
+
+3. If security group blocking:
+   Command: aws ec2 authorize-security-group-ingress --group-id <sg-id> --protocol tcp --port <port> --source-group <lb-sg-id>
+
+4. If SSL certificate expired:
+   - Renew certificate:
+   Command: certbot renew
+   Command: systemctl reload nginx
+   - Or update ACM certificate in AWS Console
+
+5. If backend overloaded:
+   - Scale up backend instances:
+   Command: aws autoscaling set-desired-capacity --auto-scaling-group-name <asg-name> --desired-capacity <new-count>
+   - Increase connection limits:
+   Command: sysctl -w net.core.somaxconn=65535
+   Command: sysctl -w net.ipv4.tcp_max_syn_backlog=65535
+
+6. If timeout issues:
+   - Increase LB idle timeout:
+   Command: aws elbv2 modify-load-balancer-attributes --load-balancer-arn <lb-arn> --attributes Key=idle_timeout.timeout_seconds,Value=120
+   - Increase backend application timeout settings
+
+7. If DNS issues:
+   - Flush DNS cache:
+   Command: systemd-resolve --flush-caches
+   - Verify DNS records:
+   Command: dig <domain> +trace
+
+8. Quick failover — remove unhealthy targets:
+   Command: aws elbv2 deregister-targets --target-group-arn <tg-arn> --targets Id=<instance-id>
+
+ESCALATION:
+- If all backends are healthy but errors persist, escalate to network team
+- If SSL/TLS issues, contact security team
+- If widespread outage affecting multiple services, declare P1 incident
+- Contact: network-oncall@company.com
+- Slack: #network-incidents
+
+PREVENTION:
+- Implement proper health check endpoints with dependency checks
+- Set up connection draining for graceful deployments
+- Use auto-scaling to handle traffic spikes
+- Monitor and alert on error rates (not just availability)
+- Regular SSL certificate renewal automation
+- Maintain proper security group documentation
+- Implement retry logic and circuit breakers in applications

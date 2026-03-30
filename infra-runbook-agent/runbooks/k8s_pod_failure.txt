@@ -1,0 +1,122 @@
+RUNBOOK: Kubernetes Pod in CrashLoopBackOff
+Category: Kubernetes
+Severity: High
+Last Updated: 2024-12-15
+
+SYMPTOMS:
+- Pod status showing CrashLoopBackOff in kubectl output
+- Application endpoints returning 503 errors
+- Kubernetes events showing repeated container restarts
+- Exponential backoff delays between restart attempts
+- Alert: "Pod restart count exceeded threshold"
+- Service degradation or complete outage for affected microservice
+
+ROOT CAUSE ANALYSIS:
+1. Application crash due to unhandled exception or segfault
+2. Missing or incorrect environment variables / config maps
+3. Failed health checks (liveness/readiness probes)
+4. Insufficient memory causing OOMKilled
+5. Missing dependencies (database, external service unavailable)
+6. Image pull errors (wrong tag, registry auth failure)
+7. Volume mount failures (PVC not bound, permission issues)
+8. Init container failures blocking main container start
+9. Resource limits too restrictive (CPU throttling)
+
+DIAGNOSTIC STEPS:
+Step 1: Get pod status and recent events
+  Command: kubectl get pods -n <namespace> | grep -i crash
+  Command: kubectl describe pod <pod-name> -n <namespace>
+  Command: kubectl get events -n <namespace> --sort-by='.lastTimestamp' | tail -30
+
+Step 2: Check pod logs (current and previous crash)
+  Command: kubectl logs <pod-name> -n <namespace>
+  Command: kubectl logs <pod-name> -n <namespace> --previous
+  Command: kubectl logs <pod-name> -n <namespace> -c <container-name> --previous
+
+Step 3: Check if OOMKilled
+  Command: kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}'
+  If output is "OOMKilled":
+  Command: kubectl top pod <pod-name> -n <namespace>
+
+Step 4: Verify configuration
+  Command: kubectl get configmap <configmap-name> -n <namespace> -o yaml
+  Command: kubectl get secret <secret-name> -n <namespace> -o yaml
+
+Step 5: Check image and pull status
+  Command: kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].image}'
+  Command: kubectl describe pod <pod-name> -n <namespace> | grep -A5 "Events"
+
+Step 6: Check resource limits and usage
+  Command: kubectl top pod -n <namespace>
+  Command: kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].resources}'
+
+Step 7: Check liveness and readiness probes
+  Command: kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].livenessProbe}'
+  Command: kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].readinessProbe}'
+
+Step 8: Check persistent volume claims
+  Command: kubectl get pvc -n <namespace>
+  Command: kubectl describe pvc <pvc-name> -n <namespace>
+
+Step 9: Check init containers
+  Command: kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.status.initContainerStatuses}'
+
+RESOLUTION STEPS:
+1. If OOMKilled — increase memory limits:
+   Command: kubectl edit deployment <deployment-name> -n <namespace>
+   Update resources:
+     limits:
+       memory: "512Mi"  → "1Gi"
+     requests:
+       memory: "256Mi"  → "512Mi"
+   Or patch directly:
+   Command: kubectl patch deployment <deployment-name> -n <namespace> -p '{"spec":{"template":{"spec":{"containers":[{"name":"<container>","resources":{"limits":{"memory":"1Gi"},"requests":{"memory":"512Mi"}}}]}}}}'
+
+2. If configuration issue:
+   Command: kubectl edit configmap <configmap-name> -n <namespace>
+   Command: kubectl rollout restart deployment <deployment-name> -n <namespace>
+
+3. If image pull error:
+   - Verify image exists:
+   Command: docker pull <image>:<tag>
+   - Fix image tag in deployment:
+   Command: kubectl set image deployment/<deployment-name> <container>=<image>:<correct-tag> -n <namespace>
+   - Check image pull secrets:
+   Command: kubectl get secret -n <namespace> | grep docker
+
+4. If liveness probe failing:
+   - Increase initialDelaySeconds and timeoutSeconds
+   Command: kubectl edit deployment <deployment-name> -n <namespace>
+   - Or temporarily remove probe for debugging:
+   Command: kubectl patch deployment <deployment-name> -n <namespace> --type json -p '[{"op":"remove","path":"/spec/template/spec/containers/0/livenessProbe"}]'
+
+5. If dependency unavailable:
+   - Check dependent services:
+   Command: kubectl get svc -n <namespace>
+   Command: kubectl get endpoints <service-name> -n <namespace>
+   - Test connectivity from within the cluster:
+   Command: kubectl run debug --rm -it --image=busybox -- sh
+   Then: wget -qO- http://<service-name>.<namespace>.svc.cluster.local:<port>/health
+
+6. Force restart the pod:
+   Command: kubectl delete pod <pod-name> -n <namespace>
+   Or restart the entire deployment:
+   Command: kubectl rollout restart deployment <deployment-name> -n <namespace>
+
+7. Rollback to previous working version:
+   Command: kubectl rollout history deployment <deployment-name> -n <namespace>
+   Command: kubectl rollout undo deployment <deployment-name> -n <namespace>
+
+ESCALATION:
+- If pods keep crashing after config fixes, escalate to application team
+- If cluster-wide pod failures, escalate to platform engineering
+- Contact: k8s-oncall@company.com
+- Slack: #kubernetes-support
+
+PREVENTION:
+- Implement proper resource requests and limits
+- Configure appropriate health check probes with reasonable timeouts
+- Use pod disruption budgets (PDBs)
+- Set up horizontal pod autoscaler (HPA)
+- Implement circuit breakers for external dependencies
+- Use init containers for dependency readiness checks

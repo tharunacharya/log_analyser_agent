@@ -1,0 +1,92 @@
+RUNBOOK: High CPU Usage on Production VM
+Category: Compute
+Severity: High
+Last Updated: 2024-12-15
+
+SYMPTOMS:
+- CPU usage consistently above 90% on one or more production VMs
+- Application response times degraded
+- Monitoring alerts triggered for sustained CPU threshold breach
+- Users reporting slow application performance
+- Load balancer health checks may start failing
+
+ROOT CAUSE ANALYSIS:
+1. Runaway process consuming excessive CPU cycles
+2. Application memory leak causing excessive garbage collection
+3. Sudden traffic spike exceeding provisioned capacity
+4. Cron jobs or batch processes running during peak hours
+5. Cryptomining malware or unauthorized processes
+6. Misconfigured application thread pools
+7. Database queries causing high CPU on application server
+
+DIAGNOSTIC STEPS:
+Step 1: SSH into the affected VM
+  Command: ssh admin@<vm-ip-address>
+
+Step 2: Check overall CPU usage
+  Command: top -bn1 | head -20
+  Command: htop
+  Command: mpstat -P ALL 1 5
+
+Step 3: Identify top CPU-consuming processes
+  Command: ps aux --sort=-%cpu | head -20
+  Command: pidstat -u 1 5
+
+Step 4: Check system load average
+  Command: uptime
+  Command: cat /proc/loadavg
+
+Step 5: Check if CPU usage is user-space or kernel-space
+  Command: vmstat 1 10
+  - High 'us' = user-space (application issue)
+  - High 'sy' = kernel-space (system/driver issue)
+  - High 'wa' = I/O wait (disk bottleneck)
+
+Step 6: Check for recent deployments or changes
+  Command: last -10
+  Command: cat /var/log/syslog | grep -i "deploy\|restart\|update" | tail -20
+
+Step 7: Monitor network connections
+  Command: netstat -an | wc -l
+  Command: ss -s
+
+RESOLUTION STEPS:
+1. If runaway process identified:
+   Command: kill -15 <PID>
+   If process doesn't stop:
+   Command: kill -9 <PID>
+
+2. If traffic spike:
+   - Scale horizontally by adding more VM instances
+   Command: az vm create --resource-group myRG --name newVM --image UbuntuLTS
+   - Or scale vertically:
+   Command: az vm resize --resource-group myRG --name myVM --size Standard_D4s_v3
+
+3. If cron job interference:
+   Command: crontab -l
+   - Reschedule to off-peak hours
+   Command: crontab -e
+
+4. If memory leak causing GC pressure:
+   - Restart the application service
+   Command: systemctl restart <service-name>
+   - Schedule proper fix with development team
+
+5. If unauthorized process:
+   Command: kill -9 <PID>
+   - Investigate origin, check for compromised credentials
+   - Run security scan:
+   Command: clamscan -r /
+
+ESCALATION:
+- If CPU remains above 90% after 15 minutes of troubleshooting, escalate to L2
+- If multiple VMs affected simultaneously, declare incident
+- Contact: infra-oncall@company.com
+- Slack: #infra-incidents
+
+PREVENTION:
+- Set up auto-scaling policies
+- Implement CPU-based horizontal pod autoscaler
+- Review and optimize cron job schedules
+- Regular capacity planning reviews
+- Enable CPU usage trending and anomaly detection
