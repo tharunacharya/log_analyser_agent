@@ -2,14 +2,14 @@
 Infra Runbook Recommendation Agent — Core orchestration layer.
 
 Flow:
-  User Query → ML Classification → Embedding Search → Runbook Retrieval
-  → Prompt Engineering → Ollama LLM → Actionable Resolution Output
+  User Query -> ML Classification -> Embedding Search -> Runbook Retrieval
+  -> Prompt Engineering -> Ollama LLM -> Actionable Resolution Output
 """
 
 import os
 from embeddings import RunbookSearchEngine
 from ml_models import MLModels
-from ollama_client import build_prompt, generate, is_ollama_available
+from ollama_client import build_prompt, generate, generate_stream, is_ollama_available
 
 
 RUNBOOKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runbooks")
@@ -26,46 +26,20 @@ class InfraRunbookAgent:
         self.ml_models = MLModels()
         print("Agent ready.")
 
-    def process_alert(self, alert_text: str, top_k: int = 3) -> dict:
+    def analyze(self, alert_text: str, top_k: int = 3) -> dict:
         """
-        Process an infrastructure alert end-to-end.
-
-        Returns a dict with:
-          - query: original alert text
-          - classification: ML category + confidence
-          - cluster_id: K-Means cluster assignment
-          - severity: estimated severity (1-10)
-          - retrieved_chunks: top matching runbook excerpts
-          - prompt: the full prompt sent to the LLM
-          - response: LLM-generated resolution
-          - ollama_available: whether Ollama was reachable
+        Run ML classification + RAG retrieval (fast step).
+        Returns everything except the LLM response.
         """
-        # Step 1: ML Classification
         ml_analysis = self.ml_models.full_analysis(alert_text)
-
-        # Step 2: Semantic search over runbooks (RAG retrieval)
         retrieved_chunks = self.search_engine.search(alert_text, top_k=top_k)
 
-        # Step 3: Build prompt with context
         prompt = build_prompt(
             user_query=alert_text,
             retrieved_chunks=retrieved_chunks,
             classification=ml_analysis["classification"],
             severity=ml_analysis["severity"],
         )
-
-        # Step 4: Call Ollama LLM
-        ollama_available = is_ollama_available(self.ollama_model)
-        if ollama_available:
-            response = generate(prompt, model=self.ollama_model)
-        else:
-            response = (
-                "⚠️ Ollama is not available. Make sure Ollama is running "
-                "(`ollama serve`) and the phi3:mini model is pulled "
-                "(`ollama pull phi3:mini`).\n\n"
-                "Below is the prompt that would be sent to the LLM:\n\n"
-                f"{prompt}"
-            )
 
         return {
             "query": alert_text,
@@ -74,9 +48,27 @@ class InfraRunbookAgent:
             "severity": ml_analysis["severity"],
             "retrieved_chunks": retrieved_chunks,
             "prompt": prompt,
-            "response": response,
-            "ollama_available": ollama_available,
+            "ollama_available": is_ollama_available(self.ollama_model),
         }
+
+    def get_llm_stream(self, prompt: str):
+        """Return a generator that yields LLM tokens (for streaming UI)."""
+        return generate_stream(prompt, model=self.ollama_model)
+
+    def get_llm_response(self, prompt: str) -> str:
+        """Return full LLM response (blocking, for CLI)."""
+        return generate(prompt, model=self.ollama_model)
+
+    def process_alert(self, alert_text: str, top_k: int = 3) -> dict:
+        """Full blocking pipeline (used by CLI)."""
+        result = self.analyze(alert_text, top_k=top_k)
+        if result["ollama_available"]:
+            result["response"] = self.get_llm_response(result["prompt"])
+        else:
+            result["response"] = (
+                "Ollama is not available. Run `ollama serve` and `ollama pull phi3:mini`."
+            )
+        return result
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 """
 Ollama API client for local LLM inference using phi3:mini.
+Supports both blocking and streaming (generator) modes.
 """
 
 import json
@@ -10,50 +11,62 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 DEFAULT_MODEL = "phi3:mini"
 
 
-def generate(prompt: str, model: str = DEFAULT_MODEL, stream: bool = False) -> str:
-    """Send a prompt to Ollama and return the full response text."""
+def generate(prompt: str, model: str = DEFAULT_MODEL) -> str:
+    """Send a prompt to Ollama and return the full response text (blocking)."""
     payload = {
         "model": model,
         "prompt": prompt,
-        "stream": stream,
+        "stream": False,
         "options": {
             "temperature": 0.3,
-            "num_predict": 1024,
+            "num_predict": 768,
+            "top_p": 0.9,
         },
     }
-
     try:
-        if stream:
-            return _generate_stream(payload)
-        else:
-            resp = requests.post(OLLAMA_URL, json=payload, timeout=120)
-            resp.raise_for_status()
-            return resp.json().get("response", "")
+        resp = requests.post(OLLAMA_URL, json=payload, timeout=180)
+        resp.raise_for_status()
+        return resp.json().get("response", "")
     except requests.ConnectionError:
-        return (
-            "ERROR: Cannot connect to Ollama. "
-            "Make sure Ollama is running: `ollama serve` "
-            "and the phi3:mini model is pulled: `ollama pull phi3:mini`"
-        )
+        return _connection_error()
     except requests.Timeout:
         return "ERROR: Ollama request timed out. The model may be loading — try again."
     except Exception as e:
         return f"ERROR: Ollama request failed: {e}"
 
 
-def _generate_stream(payload: dict) -> str:
-    """Stream response tokens from Ollama and return concatenated text."""
-    resp = requests.post(OLLAMA_URL, json=payload, stream=True, timeout=120)
-    resp.raise_for_status()
-    full_response = []
-    for line in resp.iter_lines():
-        if line:
-            data = json.loads(line)
-            token = data.get("response", "")
-            full_response.append(token)
-            if data.get("done", False):
-                break
-    return "".join(full_response)
+def generate_stream(prompt: str, model: str = DEFAULT_MODEL):
+    """
+    Generator that yields response tokens one at a time from Ollama.
+    Use this with Streamlit's st.write_stream() for real-time display.
+    """
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": True,
+        "options": {
+            "temperature": 0.3,
+            "num_predict": 768,
+            "top_p": 0.9,
+        },
+    }
+    try:
+        resp = requests.post(OLLAMA_URL, json=payload, stream=True, timeout=180)
+        resp.raise_for_status()
+        for line in resp.iter_lines():
+            if line:
+                data = json.loads(line)
+                token = data.get("response", "")
+                if token:
+                    yield token
+                if data.get("done", False):
+                    break
+    except requests.ConnectionError:
+        yield _connection_error()
+    except requests.Timeout:
+        yield "ERROR: Ollama request timed out."
+    except Exception as e:
+        yield f"ERROR: {e}"
 
 
 def build_prompt(user_query: str, retrieved_chunks: list[dict], classification: dict, severity: float) -> str:
@@ -96,3 +109,11 @@ def is_ollama_available(model: str = DEFAULT_MODEL) -> bool:
         return any(model in m for m in models)
     except Exception:
         return False
+
+
+def _connection_error() -> str:
+    return (
+        "ERROR: Cannot connect to Ollama. "
+        "Make sure Ollama is running: `ollama serve` "
+        "and the phi3:mini model is pulled: `ollama pull phi3:mini`"
+    )
